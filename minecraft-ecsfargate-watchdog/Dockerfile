@@ -8,4 +8,4 @@ RUN yum install -y net-tools jq nmap-ncat && \
 
 COPY ./watchdog.sh .
 
-ENTRYPOINT ["./watchdog.sh"]
+ENTRYPOINT ["bash", "./watchdog.sh"]

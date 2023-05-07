@@ -1,18 +1,15 @@
 #!/bin/bash
-
 ## Required Environment Variables
-
 [ -n "$CLUSTER" ] || { echo "CLUSTER env variable must be set to the name of the ECS cluster" ; exit 1; }
 [ -n "$SERVICE" ] || { echo "SERVICE env variable must be set to the name of the service in the $CLUSTER cluster" ; exit 1; }
 [ -n "$SERVERNAME" ] || { echo "SERVERNAME env variable must be set to the full A record in Route53 we are updating" ; exit 1; }
 [ -n "$DNSZONE" ] || { echo "DNSZONE env variable must be set to the Route53 Hosted Zone ID" ; exit 1; }
 [ -n "$STARTUPMIN" ] || { echo "STARTUPMIN env variable not set, defaulting to a 10 minute startup wait" ; STARTUPMIN=10; }
 [ -n "$SHUTDOWNMIN" ] || { echo "SHUTDOWNMIN env variable not set, defaulting to a 20 minute shutdown wait" ; SHUTDOWNMIN=20; }
-
 function send_notification ()
 {
-  [ "$1" = "startup" ] && MESSAGETEXT="${SERVICE} is online at ${SERVERNAME}"
-  [ "$1" = "shutdown" ] && MESSAGETEXT="Shutting down ${SERVICE} at ${SERVERNAME}"
+  [ "$1" = "startup" ] && MESSAGETEXT="The Support Group Minecraft server is now online at ${SERVERNAME}. It will shut down if nobody is connected in ${STARTUPMIN} minutes. Following that, it will shut down ${SHUTDOWNMIN} minutes after the last player disconnects."
+  [ "$1" = "shutdown" ] && MESSAGETEXT="Shutting down the Support Group Minecraft server at ${SERVERNAME}, either because nobody was in the server ${STARTUPMIN} minutes from startup, or because the last player disconnected, leading to ${SHUTDOWNMIN} minutes of inactivity."
 
   ## Twilio Option
   [ -n "$TWILIOFROM" ] && [ -n "$TWILIOTO" ] && [ -n "$TWILIOAID" ] && [ -n "$TWILIOAUTH" ] && \
@@ -24,7 +21,6 @@ function send_notification ()
   echo "SNS topic set, sending $1 message" && \
   aws sns publish --topic-arn "$SNSTOPIC" --message "$MESSAGETEXT"
 }
-
 function zero_service ()
 {
   send_notification shutdown
@@ -32,7 +28,6 @@ function zero_service ()
   aws ecs update-service --cluster $CLUSTER --service $SERVICE --desired-count 0
   exit 0
 }
-
 function sigterm ()
 {
   ## upon SIGTERM set the service desired count to zero
@@ -40,19 +35,15 @@ function sigterm ()
   zero_service
 }
 trap sigterm SIGTERM
-
 ## get task id from the Fargate metadata
 TASK=$(curl -s ${ECS_CONTAINER_METADATA_URI_V4}/task | jq -r '.TaskARN' | awk -F/ '{ print $NF }')
 echo I believe our task id is $TASK
-
 ## get eni from from ECS
 ENI=$(aws ecs describe-tasks --cluster $CLUSTER --tasks $TASK --query "tasks[0].attachments[0].details[?name=='networkInterfaceId'].value | [0]" --output text)
 echo I believe our eni is $ENI
-
 ## get public ip address from EC2
 PUBLICIP=$(aws ec2 describe-network-interfaces --network-interface-ids $ENI --query 'NetworkInterfaces[0].Association.PublicIp' --output text)
 echo "I believe our public IP address is $PUBLICIP"
-
 ## update public dns record
 echo "Updating DNS record for $SERVERNAME to $PUBLICIP"
 ## prepare json file
@@ -77,10 +68,9 @@ cat << EOF >> minecraft-dns.json
 }
 EOF
 aws route53 change-resource-record-sets --hosted-zone-id $DNSZONE --change-batch file://minecraft-dns.json
-
 ## detemine java or bedrock based on listening port
 echo "Determining Minecraft edition based on listening port..."
-echo "If we are stuck here, the minecraft container probably failed to start.  Waiting 10 minutes just in case..."
+echo "If we are stuck here, the minecraft container probably failed to start. Waiting 10 minutes just in case..."
 COUNTER=0
 while true
 do
@@ -95,7 +85,6 @@ do
   fi
 done
 echo "Detected $EDITION edition"
-
 if [ "$EDITION" == "java" ]
 then
   echo "Waiting for Minecraft RCON to begin listening for connections..."
@@ -112,7 +101,6 @@ then
     sleep 1
   done
 fi
-
 if [ "$EDITION" == "bedrock" ]
 then
   PINGA="\x01" ## uncommitted ping
@@ -122,10 +110,8 @@ then
   BEDROCKPING=$PINGA$PINGB$PINGC$PINGD
   echo "Bedrock ping string is $BEDROCKPING"
 fi
-
 ## Send startup notification message
 send_notification startup
-
 echo "Checking every 1 minute for active connections to Minecraft, up to $STARTUPMIN minutes..."
 COUNTER=0
 CONNECTED=0
@@ -149,7 +135,6 @@ do
   ## only doing short sleeps so that we can catch a SIGTERM if needed
   for i in $(seq 1 59) ; do sleep 1; done
 done
-
 echo "We believe a connection has been made, switching to shutdown watcher."
 COUNTER=0
 while [ $COUNTER -le $SHUTDOWNMIN ]
@@ -167,6 +152,5 @@ do
   fi
   for i in $(seq 1 59) ; do sleep 1; done
 done
-
 echo "$SHUTDOWNMIN minutes elapsed without a connection, terminating."
 zero_service

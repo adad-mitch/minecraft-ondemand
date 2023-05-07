@@ -199,13 +199,14 @@ export class MinecraftStack extends Stack {
 
     let snsTopicArn = '';
     /* Create SNS Topic if SNS_EMAIL is provided */
+
+    const snsTopic = new sns.Topic(this, 'ServerSnsTopic', {
+      displayName: 'Minecraft Server Notifications',
+    });
+
+    snsTopic.grantPublish(ecsTaskRole);
+
     if (config.snsEmailAddress) {
-      const snsTopic = new sns.Topic(this, 'ServerSnsTopic', {
-        displayName: 'Minecraft Server Notifications',
-      });
-
-      snsTopic.grantPublish(ecsTaskRole);
-
       const emailSubscription = new sns.Subscription(
         this,
         'EmailSubscription',
@@ -215,21 +216,17 @@ export class MinecraftStack extends Stack {
           endpoint: config.snsEmailAddress,
         }
       );
-      snsTopicArn = snsTopic.topicArn;
     }
+    snsTopicArn = snsTopic.topicArn;
 
     const watchdogContainer = new ecs.ContainerDefinition(
       this,
       'WatchDogContainer',
       {
         containerName: constants.WATCHDOG_SERVER_CONTAINER_NAME,
-        image: isDockerInstalled()
-          ? ecs.ContainerImage.fromAsset(
-              path.resolve(__dirname, '../../minecraft-ecsfargate-watchdog/')
-            )
-          : ecs.ContainerImage.fromRegistry(
-              'doctorray/minecraft-ecsfargate-watchdog'
-            ),
+        image: ecs.ContainerImage.fromAsset(
+          path.resolve(__dirname, '../../minecraft-ecsfargate-watchdog/')
+        ),
         essential: true,
         taskDefinition: taskDefinition,
         environment: {
